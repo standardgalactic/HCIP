@@ -1,0 +1,31 @@
+1 tensor(6484.4639) tensor(0.4034) tensor(4047.6709) tensor(0.4483)
+149.28919053077698
+Model saved!
+re-initialize model
+2 tensor(6014.8042) tensor(0.4076) tensor(4748.4927) tensor(0.4796)
+158.1528718471527
+Model saved!
+re-initialize model
+3 tensor(6569.7959) tensor(0.4220) tensor(4082.5527) tensor(0.5173)
+164.82798051834106
+Model saved!
+4 tensor(4084.0415) tensor(0.5235) tensor(3271.0090) tensor(0.5406)
+159.4332938194275
+Model saved!
+5 tensor(3681.5984) tensor(0.5335) tensor(3208.7361) tensor(0.5346)
+158.02042388916016
+6 tensor(3786.9812) tensor(0.5334) tensor(3398.3123) tensor(0.5384)
+150.5144546031952
+7 tensor(3688.4380) tensor(0.5419) tensor(3332.5286) tensor(0.5468)
+153.40575766563416
+Model saved!
+8 tensor(3620.6890) tensor(0.5414) tensor(3631.6887) tensor(0.5432)
+156.2345564365387
+9 tensor(3794.7969) tensor(0.5407) tensor(3937.5742) tensor(0.5377)
+148.8719882965088
+10 tensor(3988.6426) tensor(0.5402) tensor(5092.6909) tensor(0.5245)
+153.61740827560425
+11 tensor(4105.2476) tensor(0.5412) tensor(4140.1235) tensor(0.5425)
+154.68762612342834
+12 tensor(4022.5293) tensor(0.5418) tensor(3916.2585) tensor(0.5425)
+155.94581198692322
