@@ -215,27 +215,30 @@ def _viz(net, trials, idx, mannual):
 
 class rnn_trainer:  # train RNN with numerical input output
     def __init__(self, params):
-        self.batch_size = params['batch_size']
-        self.sweep_max = params['sweep_max']
-        self.epoch_max = params['epoch_max']
-        self.lr = params['lr']
-        self.optimizer = getattr(optim, params['optimizer'])
-        self.val_size = params['val_size']
-        self.stop_after = params['stop_after']
-        self.task_data_generator = params['task_data_generator']
-        self.loss_func = eval(params['loss_func'])
-        self.acc_func = eval(params['acc_func'])
+        # Initialize training parameters from input dictionary
+        self.batch_size = params['batch_size']  # Number of samples per batch
+        self.sweep_max = params['sweep_max']  # Maximum number of sweeps through data
+        self.epoch_max = params['epoch_max']  # Maximum number of training epochs
+        self.lr = params['lr']  # Learning rate
+        self.optimizer = getattr(optim, params['optimizer'])  # Optimization algorithm
+        self.val_size = params['val_size']  # Validation set size
+        self.stop_after = params['stop_after']  # Stop if no improvement after this many epochs
+        self.task_data_generator = params['task_data_generator']  # Function to generate task data
+        self.loss_func = eval(params['loss_func'])  # Loss function
+        self.acc_func = eval(params['acc_func'])  # Accuracy function
 
     def train(self, params):
+        # Extract parameters and initialize training
         task_data_generator = params['task_data_generator']
-        trials = task_data_generator()
-        save_path = params['save_path']
-        net = params['net']
-        log = writeLog.writeLog(save_path)
+        trials = task_data_generator()  # Generate task trials
+        save_path = params['save_path']  # Path to save model
+        net = params['net']  # Neural network model
+        log = writeLog.writeLog(save_path)  # Initialize logging
         epoch_max = self.epoch_max
-        idx_train = trials['idx_train']
-        idx_val = trials['idx_val']
+        idx_train = trials['idx_train']  # Training set indices
+        idx_val = trials['idx_val']  # Validation set indices
 
+        # Load existing model if it exists
         if exists(str(save_path) + '.model'):
             saved_data = torch.load(save_path + '.model', map_location=torch.device('cpu'))
             net = saved_data['net']
@@ -244,36 +247,33 @@ class rnn_trainer:  # train RNN with numerical input output
 
         net.zero_grad()
 
-        # cumulative stats along training
-        c_loss_train = []
-        c_acc_train = []
-        c_loss_val = []
-        c_acc_val = []
+        # Initialize tracking variables for training progress
+        c_loss_train = []  # Training loss history
+        c_acc_train = []   # Training accuracy history
+        c_loss_val = []    # Validation loss history
+        c_acc_val = []     # Validation accuracy history
 
         epoch = 0
         tic = time.time()
-        acc_val_max = 0
+        acc_val_max = 0  # Best validation accuracy
 
         while True:
-            # shuffle the training and testing set
+            # Shuffle training and validation indices
             idx_train = np.random.choice(idx_train, len(idx_train), replace=False)
             idx_val = np.random.choice(idx_val, len(idx_val), replace=False)
 
-            """
-            sweep through the training and testing set
-            only do backprop in the training set
-            """
-            # _viz(net, trials, idx_val[0], 1)
-
+            # Train on training set and evaluate on validation set
             loss_train, acc_train = self._sweep_data(net, trials, idx_train, training=True)
             loss_val, acc_val = self._sweep_data(net, trials, idx_val, training=False)
             epoch += 1
 
+            # Record training progress
             c_loss_train.append(loss_train.data)
             c_acc_train.append(acc_train)
             c_loss_val.append(loss_val.data)
             c_acc_val.append(acc_val)
 
+            # Log progress
             text = str(epoch) + ' ' + str(loss_train.data) + ' ' + str(acc_train) + ' ' + str(
                 loss_val.data) + ' ' + str(acc_val) + '\n'
             print(text)
@@ -284,7 +284,8 @@ class rnn_trainer:  # train RNN with numerical input output
             log.write(text)
             tic = time.time()
 
-            if acc_val == max(c_acc_val):  # and acc_val > pre_acc_val:
+            # Save model if validation accuracy improves
+            if acc_val == max(c_acc_val):
                 acc_val_max = acc_val
                 save_model = {
                     'net': net,
@@ -296,13 +297,15 @@ class rnn_trainer:  # train RNN with numerical input output
                 print('Model saved!')
                 log.write('Model saved!\n')
 
-            # acc_val not improving in the last 'stop_after' epochs
+            # Early stopping check
             if max(np.array(c_acc_val)[-self.stop_after:]) < acc_val_max:
                 break
 
+            # Stop if max epochs reached
             if epoch == epoch_max:
                 break
 
+            # Reset model if performance is poor
             if acc_val < 0.5:
                 trials = task_data_generator()
                 idx_train = trials['idx_train']
@@ -317,6 +320,7 @@ class rnn_trainer:  # train RNN with numerical input output
                 print(text)
                 log.write(text)
 
+        # Save final training statistics
         train_stats = {
             'loss_train': c_loss_train,
             'acc_train': c_acc_train,
@@ -327,14 +331,16 @@ class rnn_trainer:  # train RNN with numerical input output
 
         torch.save(train_stats, str(save_path) + '.train')
         print('Training saved!')
-        #
 
         return net
 
     def _sweep_data(self, net, trials, idx, training=True):
+        # Initialize batch processing variables
         n_batch = 0
         sample_size = idx.shape[0]
         idx_batch = np.arange(self.batch_size)
+        
+        # Extract and prepare input data
         in_arms = trials['in_arms']
         in_time = trials['in_time']
         labels = trials['labels']
@@ -342,27 +348,33 @@ class rnn_trainer:  # train RNN with numerical input output
         labels = labels.to(torch.float32)
         inputs = torch.from_numpy(np.concatenate((in_arms, in_time), axis=1))
 
+        # Initialize tracking variables
         loss_total = 0
         cor_total = 0
         denom_total = 0
 
         while True:
+            # Prepare batch data
             inputs_batch = inputs[idx[idx_batch], :, :]
             labels_batch = labels[idx[idx_batch], :, :]
 
+            # Set gradients based on training mode
             if training:
                 net.requires_grad_(True)
             else:
                 net.requires_grad_(False)
 
+            # Forward pass
             results_batch = net(inputs_batch)
 
+            # Calculate loss and accuracy
             loss_batch = self.loss_func(inputs_batch, results_batch, labels_batch)
             cor_total += self.acc_func(results_batch, labels_batch)
 
             denom_total += self.batch_size
             loss_total += loss_batch
 
+            # Backward pass if training
             if training:
                 net.zero_grad()
                 optimizer = self.optimizer(net.parameters(), self.lr)
@@ -370,13 +382,14 @@ class rnn_trainer:  # train RNN with numerical input output
                 optimizer.step()
                 optimizer.zero_grad()
 
+            # Update batch indices
             n_batch += 1
             idx_batch = (idx_batch + self.batch_size) % sample_size
 
+            # Check if epoch complete
             if 0 in idx_batch:
                 loss_total /= n_batch
                 acc_total = cor_total / denom_total
                 break
-                # finished 1 epoch
 
         return loss_total, acc_total

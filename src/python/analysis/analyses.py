@@ -78,7 +78,14 @@ def ExportActivity(params):
 
 
 def Psychometric(params):
+    """
+    Analyzes psychometric performance of the model by computing accuracy across different difficulty levels.
+    
+    Args:
+        params: Dictionary containing model parameters and data generators
+    """
     def _acc_ext_supervised(model_results):
+        """Helper function to get model choices for supervised learning"""
         outputs = model_results['outputs'].detach().numpy()
         model_d1 = np.argmax(np.mean(outputs[:, :2, 25:], 2), 1)
         model_d2 = np.argmax(np.mean(outputs[:, 2:, 25:], 2), 1)
@@ -88,72 +95,88 @@ def Psychometric(params):
         return choices_model
 
     def _acc_func(model_results):
-        ########
+        """Helper function to get model choices based on key values"""
         keys_batch = model_results['keys'][:, :, 25:]
 
+        # Get binary choices based on mean key values
         model_d1 = torch.mean(keys_batch[:, 0, :], 1) < 0.5
         model_d2 = torch.mean(keys_batch[:, 1, :], 1) < 0.5
 
+        # Convert to combined choice labels
         choices_model = np.zeros(n_trials)
         for j in range(n_trials):
             choices_model[j] = mapping_label[(int(model_d1[j]), int(model_d2[j]))]
 
         return choices_model
 
+    # Extract parameters
     save_path = params['save_path']
     net = params['net']
     task_data_generator = params['task_data_generator']
     label_func = eval(params['trainer_params']['acc_func'])
 
+    # Get trial data
     trials = task_data_generator()
     in_arms = trials['in_arms']
     in_time = trials['in_time']
     labels = trials['labels'][:, :, -1]
     n_trials = in_arms.shape[0]
 
+    # Define mapping from binary choices to combined labels
     mapping_label = {
         (0, 0): 0,
         (0, 1): 1,
         (1, 0): 2,
         (1, 1): 3
     }
+
+    # Convert labels to combined format
     labels_d1 = np.argmax(labels[:, :2], 1)
     labels_d2 = np.argmax(labels[:, 2:], 1)
     labels_comb = np.zeros(n_trials)
     for i in range(n_trials):
         labels_comb[i] = mapping_label[(labels_d1[i], labels_d2[i])]
 
+    # Get model predictions
     inputs = np.concatenate((in_arms, in_time), axis=1)
     inputs = torch.from_numpy(inputs)
     model_results = net(copy.deepcopy(inputs))
-
     choices_model = label_func(model_results)
 
-    acc_each = np.zeros((4, 4))
-    acc_margin0 = np.zeros(4)
-    acc_margin1 = np.zeros(4)
-    idx_each = np.ndarray((4, 4), dtype=object)
-    idx_margin0 = np.ndarray((4), dtype=object)
-    idx_margin1 = np.ndarray((4), dtype=object)
+    # Initialize arrays for storing accuracies
+    acc_each = np.zeros((4, 4))  # Accuracy for each difficulty combination
+    acc_margin0 = np.zeros(4)    # Marginal accuracy for horizontal choice
+    acc_margin1 = np.zeros(4)    # Marginal accuracy for vertical choice
+    idx_each = np.ndarray((4, 4), dtype=object)      # Trial indices for each difficulty combo
+    idx_margin0 = np.ndarray((4), dtype=object)      # Trial indices for horizontal margins
+    idx_margin1 = np.ndarray((4), dtype=object)      # Trial indices for vertical margins
+
+    # Map difficulty levels to indices
     mapping_idx = {
         3: 0,
         2: 1,
         1: 2,
         0: 3
     }
+
+    # Group trials by difficulty levels
     for i in range(n_trials):
+        # Get horizontal difficulty index
         idx0 = mapping_idx[np.abs(in_arms[i, 0, -1] - in_arms[i, 1, -1])]
 
+        # Get vertical difficulty index based on chosen path
         if labels_d1[i] == 0:
             idx1 = mapping_idx[np.abs(in_arms[i, 2, -1] - in_arms[i, 3, -1])]
         else:
             idx1 = mapping_idx[np.abs(in_arms[i, 4, -1] - in_arms[i, 5, -1])]
 
+        # Store trial indices for each difficulty combination
         if idx_each[idx0, idx1] is None:
             idx_each[idx0, idx1] = []
         else:
             idx_each[idx0, idx1].append(i)
 
+        # Store trial indices for marginal difficulties
         if idx_margin0[idx0] is None:
             idx_margin0[idx0] = []
         else:
@@ -164,48 +187,70 @@ def Psychometric(params):
         else:
             idx_margin1[idx1].append(i)
 
+    # Calculate accuracies for each difficulty level
     for i in range(4):
+        # Calculate marginal accuracies
         acc_margin0[i] = sum(choices_model[idx_margin0[i]] == labels_comb[idx_margin0[i]]) / len(idx_margin0[i])
         acc_margin1[i] = sum(choices_model[idx_margin1[i]] == labels_comb[idx_margin1[i]]) / len(idx_margin1[i])
+        
+        # Calculate accuracies for each difficulty combination
         for j in range(4):
             idx_ij = idx_each[i, j]
             acc_each[i, j] = sum(choices_model[idx_ij] == labels_comb[idx_ij]) / len(idx_ij)
 
+    # Plot results
     fig, ax = plt.subplots(1, 3, figsize=(20, 3))
     cmap = 'jet'
+    
+    # Plot accuracy heatmap
     h = ax[0].imshow(np.flip(acc_each, axis=1), cmap=mpl.colormaps[cmap], vmin=0, vmax=1)
     ax[0].set_xlabel('Horizontal Diff.')
     ax[0].set_ylabel('Vertical Diff.')
+    
+    # Plot marginal accuracies
     ax[1].imshow(np.flip(acc_margin0[:, np.newaxis], axis=0), cmap=mpl.colormaps[cmap], vmin=0, vmax=1)
     ax[1].set_title('Horizontal marginal')
     ax[2].imshow(np.flip(acc_margin1[:, np.newaxis], axis=0), cmap=mpl.colormaps[cmap], vmin=0, vmax=1)
     ax[2].set_title('Vertical marginal')
+    
     fig.colorbar(h, ax=ax[0])
     plt.show()
 
 
 def saccade(params):
+    """
+    Visualizes saccade trajectories for different trial conditions.
+    
+    Args:
+        params: Dictionary containing:
+            task_data_generator: Generator for task trial data
+            net: Neural network model
+    """
+    # Extract parameters
     task_data_generator = params['task_data_generator']
     net = params['net']
     trials = task_data_generator()
     in_arms = trials['in_arms']
     tm = trials['in_time']
     idx = 0
+
+    # Define example trials with different conditions
     trial1 = [4, 7, 5, 7, 6, 4, 4, 7]  # easy/easy
     trial2 = [4, 6, 6, 7, 5, 4, 6, 7]  # hierarchical
     trial3 = [6, 5, 7, 5, 4, 4, 5, 7]  # counterfactual
-    # trial2 = [7, 4, 5, 6, 7, 4, 7, 6]  # easy/hard
-    # trial3 = [5, 6, 7, 4, 4, 7, 6, 7]  # hard/easy
-    # trial4 = [5, 6, 4, 5, 7, 6, 6, 7]  # hard/hard
     trial_list = [trial1, trial2, trial3]
+
+    # Create figure with 3 subplots
     fig, ax = plt.subplots(1, 3, figsize=(10, 3))
 
+    # Process each trial
     for t in range(len(trial_list)):
         np.random.seed(3)
 
         trial = trial_list[t]
         mannual = True
         if mannual:
+            # Set arm lengths and time markers
             in_arms[idx, 0, :] = trial[0]
             in_arms[idx, 1, :] = trial[1]
             in_arms[idx, 2, :] = trial[2]
@@ -217,74 +262,70 @@ def saccade(params):
             tm2 = trial[7]
 
             if True:
+                # Process time markers
                 tm1_ = int(np.round(tm1))
                 tm2_ = int(np.round(tm2))
                 tm1_ = max(tm1_, 1)
                 tm2_ = max(tm2_, 1)
+                
+                # Set time marker values with linear ramps
                 tm[idx, 0, 5:5 + tm1_ + 1] = np.arange(tm1_ + 1) / tm1_ * tm1
                 tm[idx, 0, 5 + tm1_:] = tm1
 
                 tm[idx, 1, 5 + tm1_:5 + tm1_ + tm2_ + 1] = np.arange(tm2_ + 1) / tm2_ * tm2
                 tm[idx, 1, 5 + tm1_ + tm2_:] = tm2
 
+        # Get model predictions
         inputs = np.concatenate((in_arms, tm), axis=1)
-        # inputs[idx, 3, :]
         results = net(torch.from_numpy(np.expand_dims(inputs[idx, :, :], 0)))
-        # outputs = torch.squeeze(results['outputs'])
-        # outputs = outputs.detach().numpy()
         keys = torch.squeeze(results['keys'])
         keys = keys.detach().numpy()
         prs = torch.squeeze(results['prs'])
         prs = prs.detach().numpy()
 
         tm_real = np.squeeze(results['tm_modified'])
-        # tm_real = tm_real.detach().numpy()
 
-        labels = trials['labels']
-        n_time = in_arms.shape[2]
-        n_arms = in_arms.shape[1]
-        colormap = 'Set1'
-        cmap = plt.get_cmap(colormap, n_arms)
-
-        # saccades
+        # Define time epochs for analysis
         pre = np.arange(4)
+        epoch1 = np.arange(6 + tm1_, 6 + tm1_ + 2)  # 4 time points after tm1
+        epoch2 = np.arange(tm.shape[2] - 4, tm.shape[2] - 1)  # last 4 time points
 
-        # 4 time points after tm1 presentation
-        epoch1 = np.arange(6 + tm1_, 6 + tm1_ + 2)
-
-        # last 4 time points
-        epoch2 = np.arange(tm.shape[2] - 4, tm.shape[2] - 1)
-
+        # Calculate choice points based on key values
         choice1 = np.array([1 - np.mean(keys[0, epoch1]), 0])
         choice2 = np.array([1 - np.mean(keys[0, epoch2]), 0.1])
         choice3 = np.array([1 - np.mean(keys[0, epoch2]), np.mean(keys[1, epoch2])])
 
-        point0 = [0, 0]
-        point1 = [(1 - choice1[0]) * trial[0] * -1 + choice1[0] * trial[1], 0]
-
-        point4 = [(1 - choice3[0]) * trial[0] * -1 + choice3[0] * trial[1],
+        # Define trajectory points
+        point0 = [0, 0]  # Start point
+        point1 = [(1 - choice1[0]) * trial[0] * -1 + choice1[0] * trial[1], 0]  # First decision point
+        point4 = [(1 - choice3[0]) * trial[0] * -1 + choice3[0] * trial[1],  # Final decision point
                   (1 - choice3[0]) * (choice3[1] * trial[2] + (1 - choice3[1]) * trial[3] * -1) + choice3[0] * (
                           choice3[1] * trial[4] + (1 - choice3[1]) * trial[5] * -1)]
         points = np.array([point0, point1, point4])
 
+        # Plot maze structure and trajectories
         lgd = str(trial)
         ax1 = ax[t]
         width = 10
         color = (.4, .4, .4, .3)
-        ax1.plot([0, 0], [0, 5], linewidth=width, color=(.7, .7, .7, .3))
-        ax1.plot([0, -trial[0]], [0, 0], linewidth=width, color=color)
-        ax1.plot([0, trial[1]], [0, 0], linewidth=width, color=color)
-        ax1.plot([-trial[0], -trial[0]], [0, trial[2]], linewidth=width, color=color)
-        ax1.plot([-trial[0], -trial[0]], [0, -trial[3]], linewidth=width, color=color)
-        ax1.plot([trial[1], trial[1]], [0, trial[4]], linewidth=width, color=color)
-        ax1.plot([trial[1], trial[1]], [0, -trial[5]], linewidth=width, color=color)
+        
+        # Draw maze structure
+        ax1.plot([0, 0], [0, 5], linewidth=width, color=(.7, .7, .7, .3))  # Vertical center line
+        ax1.plot([0, -trial[0]], [0, 0], linewidth=width, color=color)  # Left horizontal arm
+        ax1.plot([0, trial[1]], [0, 0], linewidth=width, color=color)  # Right horizontal arm
+        ax1.plot([-trial[0], -trial[0]], [0, trial[2]], linewidth=width, color=color)  # Left upper vertical
+        ax1.plot([-trial[0], -trial[0]], [0, -trial[3]], linewidth=width, color=color)  # Left lower vertical
+        ax1.plot([trial[1], trial[1]], [0, trial[4]], linewidth=width, color=color)  # Right upper vertical
+        ax1.plot([trial[1], trial[1]], [0, -trial[5]], linewidth=width, color=color)  # Right lower vertical
 
+        # Plot start point and trajectory arrows
         ax1.scatter(0, 0, s=200, color=(.7, 0, 0, .7), label=lgd)
         for i in range(len(points) - 1):
             ax1.quiver(points[i, 0], points[i, 1], points[i + 1, 0] - points[i, 0], points[i + 1, 1] - points[i, 1],
                        angles='xy', scale_units='xy', scale=1, width=0.005, headwidth=10, headlength=9,
                        color=(1, 0, 0, 0.5))
 
+        # Draw time marker indicators
         left_end = -8
         ax1.quiver(left_end, -8, 16, 0,
                    angles='xy', scale_units='xy', scale=1, width=0.005, headwidth=10, headlength=9,
@@ -294,67 +335,83 @@ def saccade(params):
         ax1.plot([left_end + 1 + trial[6] + trial[7], left_end + 1 + trial[6] + trial[7]], [-8, -7], linewidth=3,
                  color=(1, 0, 0, 0.5))
 
+        # Set plot properties
         ax1.legend()
         ax1.set_xlim([-10, 10])
         ax1.set_ylim([-10, 10])
 
-        # ax1.legend(h1, lgd)
     plt.show()
 
 
 def viz(params):
+    """
+    Visualizes model behavior by plotting arm lengths, keys, and saccade trajectories.
+    
+    Args:
+        params: Dictionary containing:
+            task_data_generator: Generator for task trial data
+            net: Neural network model
+    """
+    # Extract parameters
     task_data_generator = params['task_data_generator']
     net = params['net']
     trials = task_data_generator()
     in_arms = trials['in_arms']
     tm = trials['in_time']
     idx = 0
+
+    # Define example trials
     trial1 = [4, 7, 5, 7, 6, 4, 4, 7]  # easy/easy
-    trial2 = [4, 6, 6, 7, 5, 4, 6, 7]  # hierarchical
+    trial2 = [4, 6, 6, 7, 5, 4, 6, 7]  # hierarchical  
     trial3 = [5, 4, 7, 6, 4, 4, 4, 7]  # counterfactual
     # trial2 = [7, 4, 5, 6, 7, 4, 7, 6]  # easy/hard
     # trial3 = [5, 6, 7, 4, 4, 7, 6, 7]  # hard/easy
     # trial4 = [5, 6, 4, 5, 7, 6, 6, 7]  # hard/hard
     trial_list = [trial1, trial2, trial3]
+
+    # Process each trial
     for t in range(len(trial_list)):
         trial = trial_list[t]
         mannual = True
         if mannual:
+            # Set arm lengths
             in_arms[idx, 0, :] = trial[0]
             in_arms[idx, 1, :] = trial[1]
             in_arms[idx, 2, :] = trial[2]
             in_arms[idx, 3, :] = trial[3]
             in_arms[idx, 4, :] = trial[4]
             in_arms[idx, 5, :] = trial[5]
+            
+            # Set time markers
             tm[idx, :, :] = 0
             tm1 = trial[6]
             tm2 = trial[7]
 
             if True:
+                # Round time markers and ensure minimum value of 1
                 tm1_ = int(np.round(tm1))
                 tm2_ = int(np.round(tm2))
                 tm1_ = max(tm1_, 1)
                 tm2_ = max(tm2_, 1)
+                
+                # Create ramping time markers
                 tm[idx, 0, 5:5 + tm1_ + 1] = np.arange(tm1_ + 1) / tm1_ * tm1
                 tm[idx, 0, 5 + tm1_:] = tm1
 
                 tm[idx, 1, 5 + tm1_:5 + tm1_ + tm2_ + 1] = np.arange(tm2_ + 1) / tm2_ * tm2
                 tm[idx, 1, 5 + tm1_ + tm2_:] = tm2
 
+        # Prepare inputs and get model predictions
         inputs = np.concatenate((in_arms, tm), axis=1)
-        # inputs[idx, 3, :]
         np.random.seed(0)
         results = net(torch.from_numpy(np.expand_dims(inputs[idx, :, :], 0)))
-        # outputs = torch.squeeze(results['outputs'])
-        # outputs = outputs.detach().numpy()
         keys = torch.squeeze(results['keys'])
         keys = keys.detach().numpy()
         prs = torch.squeeze(results['prs'])
         prs = prs.detach().numpy()
-
         tm_real = np.squeeze(results['tm_modified'])
-        # tm_real = tm_real.detach().numpy()
 
+        # Setup plotting parameters
         labels = trials['labels']
         n_time = in_arms.shape[2]
         n_arms = in_arms.shape[1]
@@ -362,10 +419,11 @@ def viz(params):
         cmap = plt.get_cmap(colormap, n_arms)
         colors = cmap(np.arange(0, cmap.N))
 
+        # Create figure with 3 subplots
         fig, ax = plt.subplots(3, 1)
         x = np.arange(n_time)
 
-        # input primary arm lengths
+        # Plot primary arm lengths
         handles = []
         lgd = ('Arm 0: ' + str(in_arms[idx, 0, 0]), 'Arm 1: ' + str(in_arms[idx, 1, 0]), 'Tm 1: '
                + str(np.max(tm[idx, 0, :])))
@@ -378,7 +436,7 @@ def viz(params):
         ax[0].set_ylabel('Primary arms')
         ax[0].legend(handles, lgd)
 
-        # input secondary arm lengths
+        # Plot secondary arm lengths
         handles = []
         lgd = (
             'Arm 2: ' + str(in_arms[idx, 2, 0]), 'Arm 3: ' + str(in_arms[idx, 3, 0]),
@@ -393,7 +451,7 @@ def viz(params):
         ax[1].set_ylabel('Secondary arms')
         ax[1].legend(handles, lgd)
 
-        # keys
+        # Plot keys
         keys = keys[:, 1:]
         x = x[1:]
         handles = []
@@ -404,34 +462,33 @@ def viz(params):
         lgd = ('Horizontal', 'Vertical')
         ax[2].legend(handles, lgd)
 
-        # saccades
+        # Calculate saccade trajectories
         pre = np.arange(4)
+        epoch1 = np.arange(6 + tm1_, 6 + tm1_ + 2)  # 4 time points after tm1 presentation
+        epoch2 = np.arange(tm.shape[2] - 4, tm.shape[2] - 1)  # last 4 time points
 
-        # 4 time points after tm1 presentation
-        epoch1 = np.arange(6 + tm1_, 6 + tm1_ + 2)
-
-        # last 4 time points
-        epoch2 = np.arange(tm.shape[2] - 4, tm.shape[2] - 1)
-
+        # Calculate choice points based on key values
         choice1 = np.array([1 - np.mean(keys[0, epoch1]), 0])
         choice2 = np.array([1 - np.mean(keys[0, epoch2]), 0.1])
         choice3 = np.array([1 - np.mean(keys[0, epoch2]), np.mean(keys[1, epoch2])])
         y1 = 0.2
         y2 = -0.2
+
+        # Define trajectory points
         point0 = [0, 0]
         point1 = [(1 - choice1[0]) * trial[0] * -1 + choice1[0] * trial[1], 0]
-        # point2 = [(1 - choice1[0]) * trial[0] * -1 + choice1[0] * trial[1], y2]
-        # point3 = [(1 - choice2[0]) * trial[0] * -1 + choice2[0] * trial[1], ]
         point4 = [(1 - choice3[0]) * trial[0] * -1 + choice3[0] * trial[1],
                   (1 - choice3[0]) * (choice3[1] * trial[2] + (1 - choice3[1]) * trial[3] * -1) + choice3[0] * (
                           choice3[1] * trial[4] + (1 - choice3[1]) * trial[5] * -1)]
         points = np.array([point0, point1, point4])
-        # cmap = plt.get_cmap('Pastel1', 8)
-        # colors = cmap(np.arange(0, cmap.N))
+
+        # Plot saccade trajectories
         epoch_colors = [[.5, .5, .5], colors[0, :3], colors[1, :3], colors[3, :3]]
         handles = []
         lgd = str(trial)
         fig1, ax1 = plt.subplots()
+        
+        # Draw maze structure
         width = 10
         color = (.4, .4, .4, .3)
         ax1.plot([0, 0], [0, 5], linewidth=width, color=(.7, .7, .7, .3))
@@ -442,12 +499,14 @@ def viz(params):
         ax1.plot([trial[1], trial[1]], [0, trial[4]], linewidth=width, color=color)
         ax1.plot([trial[1], trial[1]], [0, -trial[5]], linewidth=width, color=color)
 
+        # Plot start point and trajectory arrows
         ax1.scatter(0, 0, s=200, color=(.7, 0, 0, .7), label=lgd)
         for i in range(len(points) - 1):
             ax1.quiver(points[i, 0], points[i, 1], points[i + 1, 0] - points[i, 0], points[i + 1, 1] - points[i, 1],
                        angles='xy', scale_units='xy', scale=1, width=0.005, headwidth=10, headlength=9,
                        color=(1, 0, 0, 0.5))
 
+        # Draw time marker indicators
         left_end = -8
         ax1.quiver(left_end, -8, 16, 0,
                    angles='xy', scale_units='xy', scale=1, width=0.005, headwidth=10, headlength=9,
@@ -457,44 +516,30 @@ def viz(params):
         ax1.plot([left_end + 1 + trial[6] + trial[7], left_end + 1 + trial[6] + trial[7]], [-8, -7], linewidth=3,
                  color=(1, 0, 0, 0.5))
 
+        # Set plot properties
         ax1.legend()
         ax1.set_xlim([-10, 10])
         ax1.set_ylim([-10, 10])
-
-        # ax1.legend(h1, lgd)
         plt.show()
-        a = 1
 
 
-# def euc_distance(P, Q):
-#     '''
-#     p is the true distribution
-#     q is the model distribution
-#     '''
-#     n_bootstrap = P.shape[0]
-
-#     result = np.zeros((n_bootstrap))
-#     for ib in range(n_bootstrap):
-#         p = P[ib].flatten()
-#         q = Q[ib].flatten()
-#         euc = []
-#         for i in range(len(p)):
-#             if p[i] is None:
-#                 continue
-#             p_v = np.zeros(4)
-#             q_v = np.zeros(4)
-#             for choice in range(4):
-#                 p_v[choice] = (np.array(p[i])==choice).sum()/len(p[i])
-#                 q_v[choice] = (np.array(q[i])==choice).sum()/len(q[i])
-#             euc.append(np.linalg.norm(p_v-q_v,ord=2))
-#         result[ib] = np.mean(euc)
-#     return result
 
 def KL_divergence(P, Q):
-    '''
-    p is the true distribution
-    q is the model distribution
-    '''
+    """
+    Calculates the Kullback-Leibler divergence between two probability distributions.
+    
+    Args:
+        P: Array of shape (n_bootstrap, n_samples, n_classes) containing true distributions
+        Q: Array of shape (n_bootstrap, n_samples, n_classes) containing model distributions
+        
+    Returns:
+        Array of shape (n_bootstrap) containing mean KL divergence for each bootstrap sample
+        
+    Notes:
+        - Small epsilon (1e-2) is added to probabilities to avoid numerical issues
+        - Probabilities are renormalized after adding epsilon
+        - For each bootstrap sample, returns mean KL divergence across all samples
+    """
     n_bootstrap = P.shape[0]
     eps=1e-2
     result = np.zeros((n_bootstrap))
@@ -517,7 +562,20 @@ def KL_divergence(P, Q):
 
 
 def AnalysisMatchModelStat(params):
+    """
+    Analyzes how well the model matches different strategies by comparing negative log likelihoods.
+    
+    Args:
+        params: Dictionary containing:
+            save_path: Path to save results
+            net: Neural network model
+            task_data_generator: Generator for task trial data
+            trainer_params: Training parameters including accuracy function
+            n_bootstrap: Number of bootstrap iterations
+    """
+
     def _acc_ext_supervised(model_results):
+        """Convert model outputs to choice labels for supervised learning"""
         outputs = model_results['outputs'].detach().numpy()
         model_d1 = np.argmax(np.mean(outputs[:, :2, 25:], 2), 1)
         model_d2 = np.argmax(np.mean(outputs[:, 2:, 25:], 2), 1)
@@ -529,7 +587,7 @@ def AnalysisMatchModelStat(params):
     
     
     def _acc_func(model_results):
-        ########
+        """Convert model key activations to choice labels"""
         keys_batch = model_results['keys'][:, :, 25:]
 
         d1 = torch.mean(keys_batch[:, 0, :], 1) < 0.5
@@ -542,11 +600,14 @@ def AnalysisMatchModelStat(params):
 
         return choices_model
 
+    # Extract parameters
     save_path = params['save_path']
     net = params['net']
     task_data_generator = params['task_data_generator']
     label_func = eval(params['trainer_params']['acc_func'])
     n_bootstrap = params['n_bootstrap']
+    
+    # Define mapping from binary decisions to choice labels
     mapping = {
         (0, 0): 0,
         (0, 1): 1,
@@ -555,11 +616,12 @@ def AnalysisMatchModelStat(params):
     }
     wb = task_data_generator.wb
     wb_inc = task_data_generator.wb_inc
-    # select the best switch threshold of counterfactual model on training set, then run 10 iterations
     
+    # Parameters for threshold search
     thresh_range = [0, 1]
     n_search = 5
 
+    # Load or compute counterfactual model emissions
     emission_c_file = save_path.parents[0] / (str(np.around(wb_inc, decimals=3))+'.ems')
     if emission_c_file.exists():
         results = torch.load(emission_c_file)
@@ -568,10 +630,13 @@ def AnalysisMatchModelStat(params):
         eps=1e-3
 
         def _loss_func(trials, wb, wb_inc, threshold):
+            """Compute negative log likelihood loss for threshold selection"""
             emission = p_models.counterfactual_emission(trials, wb, wb_inc, threshold=threshold, n_sim=1000)
             labels = trials['labels']
             result = -np.mean(np.log(emission[np.arange(len(emission)), labels.astype(int)] + eps))
             return result
+            
+        # Generate trial data
         task_data_generator.rep_per_maze = 1
         trials = task_data_generator()
         n_conditions = trials['in_arms'].shape[0]
@@ -589,7 +654,7 @@ def AnalysisMatchModelStat(params):
             'labels': labels_comb
         }
 
-        # perform search
+        # Binary search for optimal threshold
         il = thresh_range[0]
         ir = thresh_range[1]
         im = (il + ir) / 2
@@ -610,7 +675,7 @@ def AnalysisMatchModelStat(params):
             counter += 1
             print(counter, im, m)
 
-        
+        # Use optimal threshold to compute emissions
         thresh_c = im
 
         emission_c_dict = {}
@@ -623,13 +688,13 @@ def AnalysisMatchModelStat(params):
             key = tuple(key)
             emission_c_dict[key] = emission_raw[i]
 
-
+        # Save counterfactual emissions
         results = {
             'emission_c': emission_c_dict
         }
         torch.save(results, emission_c_file)
 
-
+    # Load or compute emissions for other models
     emission_file = save_path.parents[1] / 'emission.dict'
     if emission_file.exists():
         results = torch.load(emission_file)
@@ -637,8 +702,7 @@ def AnalysisMatchModelStat(params):
         emission_p_dict = results['emission_p']
         emission_h_dict = results['emission_h']
     else:
-        # select the best switch threshold of counterfactual model on training set, then run 10 iterations
-        # for all models on the validation set
+        # Generate trial data
         task_data_generator.rep_per_maze = 1
         trials = task_data_generator()
         n_conditions = trials['in_arms'].shape[0]
@@ -655,10 +719,13 @@ def AnalysisMatchModelStat(params):
             'in_time': in_time,
             'labels': labels_comb
         }
+        
+        # Compute emissions for each model
         emission_o = p_models.optimal_emission(trials, wb=0.15, n_sim=10000)
         emission_p = p_models.postdictive_emission(trials, wb=0.15, n_sim=10000)
         emission_h = p_models.hierarchy_emission(trials, wb=0.15, n_sim=10000)
 
+        # Store emissions in dictionaries
         emission_o_dict = {}
         emission_p_dict = {}
         emission_h_dict = {}
@@ -671,7 +738,7 @@ def AnalysisMatchModelStat(params):
             emission_p_dict[key] = emission_p[i]
             emission_h_dict[key] = emission_h[i]
 
-        # save
+        # Save all emissions
         results = {
             'emission_o': emission_o_dict,
             'emission_p': emission_p_dict,
@@ -680,36 +747,36 @@ def AnalysisMatchModelStat(params):
 
         torch.save(results, 'emission.dict')
     
+    # Initialize array for negative log likelihoods
     metric_all = np.zeros((n_bootstrap, 4))  # o, h, p, c
 
-    # if there is emission dictionary
-
+    # Bootstrap evaluation
     for it in range(n_bootstrap):
         trials = task_data_generator(seed=it)
-        # idx_val = trials['idx_val']
         idx_val = np.arange(len(trials['in_arms']))
         in_arms_val = trials['in_arms'][idx_val, :, :]
         in_time_val = trials['in_time'][idx_val, :, :]
         labels_val = trials['labels'][idx_val, :, -1]
 
-
+        # Convert labels to combined format
         labels_val_d1 = np.argmax(labels_val[:, :2], 1)
         labels_val_d2 = np.argmax(labels_val[:, 2:], 1)
         labels_val_comb = np.zeros(len(idx_val))
         for i in range(len(idx_val)):
             labels_val_comb[i] = mapping[(labels_val_d1[i], labels_val_d2[i])]
-        # labels_val = np.argmax(labels_val, axis=1)
 
+        # Create maze tuples for lookup
         mazes = []
         for i in range(in_arms_val.shape[0]):
             mazes.append(tuple(in_arms_val[i, :, -1].astype(int).tolist() + [int(labels_val_comb[i])]))
 
+        # Get model predictions
         inputs = np.concatenate((in_arms_val, in_time_val), axis=1)
         inputs = torch.from_numpy(inputs)
         model_results = net(copy.deepcopy(inputs))
-
         choices_model = label_func(model_results)
 
+        # Compute negative log likelihoods
         eps=1e-2
         for i in range(len(mazes)):
             maze = tuple(mazes[i])
@@ -722,7 +789,7 @@ def AnalysisMatchModelStat(params):
 
         metric_all[it, :] /= len(mazes)
 
-
+    # Save results
     results = {
         'nll': metric_all
     }
@@ -734,7 +801,14 @@ def AnalysisMatchModelStat(params):
 
 
 def AnalysisWMNoiseSweep(params):
+    """
+    Analyzes working memory noise by comparing model predictions to different strategies.
+    
+    Args:
+        params: Dictionary containing model parameters and data generator
+    """
     def perf_label(model_results):
+        """Converts model outputs to choice labels"""
         outputs = model_results['outputs'].detach().numpy()
         model_d1 = np.argmax(np.mean(outputs[:, :2, 25:], 2), 1)
         model_d2 = np.argmax(np.mean(outputs[:, 2:, 25:], 2), 1)
@@ -744,7 +818,7 @@ def AnalysisWMNoiseSweep(params):
         return choices_model
 
     def _acc_func(model_results):
-        ########
+        """Converts model key activations to choice labels"""
         keys_batch = model_results['keys'][:, :, 25:]
 
         d1 = torch.mean(keys_batch[:, 0, :], 1) < 0.5
@@ -757,6 +831,7 @@ def AnalysisWMNoiseSweep(params):
 
         return choices_model
 
+    # Extract parameters
     save_path = params['save_path']
     net = params['net']
     task_data_generator = params['task_data_generator']
@@ -764,10 +839,12 @@ def AnalysisWMNoiseSweep(params):
     wb = task_data_generator.wb
     wb_inc = task_data_generator.wb_inc
     iteration = 10
-    # select the best switch threshold of counterfactual model on training set, then run 10 iterations
-    # for all models on the validation set
+
+    # Find optimal threshold for counterfactual model on training data
     thresh = np.arange(0.01, 0.2, 0.01)
     trials = task_data_generator()
+    
+    # Get training data
     idx_train = trials['idx_train']
     in_arms_train = trials['in_arms'][idx_train, :, :]
     in_time_train = trials['in_time'][idx_train, :, :]
@@ -777,30 +854,39 @@ def AnalysisWMNoiseSweep(params):
         'in_time': in_time_train,
         'labels': labels_train
     }
+
+    # Define mapping from binary decisions to choice labels
     mapping = {
         (0, 0): 0,
         (0, 1): 1,
         (1, 0): 2,
         (1, 1): 3
     }
+
+    # Convert training labels to choice labels
     labels_train_d1 = np.argmax(labels_train[:, :2], 1)
     labels_train_d2 = np.argmax(labels_train[:, 2:], 1)
     labels_train_comb = np.zeros(len(idx_train))
     for i in range(len(idx_train)):
         labels_train_comb[i] = mapping[(labels_train_d1[i], labels_train_d2[i])]
 
+    # Test different thresholds for counterfactual model
     choices_c = np.ndarray(len(thresh), dtype=object)
     acc_c = np.zeros(len(thresh))
 
     for i, th in enumerate(thresh):
         choices_c[i] = p_models.counterfactual(trials_train, wb, wb_inc, threshold=th)
         acc_c[i] = sum(labels_train_comb == choices_c[i]) / len(choices_c[i])
-        # print(i)
 
+    # Select threshold with best accuracy
     thresh_c = thresh[np.argmax(acc_c)]
 
-    euc_all = np.zeros((iteration, 4))  # o, h, p, c
+    # Initialize arrays for storing distances between model and strategies
+    euc_all = np.zeros((iteration, 4))  # optimal, hierarchical, postdictive, counterfactual
+
+    # Run multiple iterations
     for it in range(iteration):
+        # Get validation data
         trials = task_data_generator()
         idx_val = trials['idx_val']
         in_arms_val = trials['in_arms'][idx_val, :, :]
@@ -812,625 +898,175 @@ def AnalysisWMNoiseSweep(params):
             'labels': labels_val
         }
 
+        # Convert validation labels to choice labels
         labels_val_d1 = np.argmax(labels_val[:, :2], 1)
         labels_val_d2 = np.argmax(labels_val[:, 2:], 1)
         labels_val_comb = np.zeros(len(idx_val))
         for i in range(len(idx_val)):
             labels_val_comb[i] = mapping[(labels_val_d1[i], labels_val_d2[i])]
-        # labels_val = np.argmax(labels_val, axis=1)
 
+        # Get predictions from different strategies
         choices_p = p_models.postdictive(trials_val, wb)
         choices_o = p_models.optimal(trials_val, wb)
         choices_h = p_models.hierarchy(trials_val, wb)
         choices_c = p_models.counterfactual(trials_val, wb, wb_inc, threshold=thresh_c)
 
+        # Get model predictions
         inputs = np.concatenate((in_arms_val, in_time_val), axis=1)
         inputs = torch.from_numpy(inputs)
         model_results = net(copy.deepcopy(inputs))
-
         choices_model = label_func(model_results)
 
-
+        # Calculate accuracy of counterfactual model
         acc_c = sum(labels_val_comb == choices_c) / len(choices_c)
 
-
-        # coordinate metric
+        # Setup for coordinate metric calculation
         n_length = len(np.unique(in_arms_val[:, 0, 0]))
         n_diffs = n_length * 2 - 1
-        # difference between primary arms, left side, right side
 
+        # Initialize arrays for storing choice vectors
         indices = np.ndarray((n_diffs, n_diffs, n_diffs), dtype=object)
         vector_o = np.ndarray((n_diffs, n_diffs, n_diffs), dtype=object)
         vector_h = np.ndarray((n_diffs, n_diffs, n_diffs), dtype=object)
         vector_p = np.ndarray((n_diffs, n_diffs, n_diffs), dtype=object)
-
         vector_c = np.ndarray((n_diffs, n_diffs, n_diffs), dtype=object)
         vector_model = np.ndarray((n_diffs, n_diffs, n_diffs), dtype=object)
 
-        # map to the other vertical arm
-        mapping10 = {
-            0: 1,
-            1: 0,
-            2: 3,
-            3: 2
-        }
+        # Define mappings for arm transformations
+        mapping10 = {0: 1, 1: 0, 2: 3, 3: 2}  # Map to other vertical arm
+        mapping0 = {0: [2, 3], 1: [2, 3], 2: [0, 1], 3: [0, 1]}  # Map to other maze side
 
-        # map to the other side of the maze
-        mapping0 = {
-            0: [2, 3],
-            1: [2, 3],
-            2: [0, 1],
-            3: [0, 1]
-        }
-
-        # calculate the vector for each maze condition for each strategy
+        # Calculate choice vectors for each maze condition
         for i in range(len(in_arms_val)):
             arms_i = in_arms_val[i, :, 0]
             tm2_i = in_time_val[i, 1, -1]
+            
+            # Calculate differences between arms
             diff1 = int(arms_i[0] - arms_i[1] + n_length - 1)
             diff2 = int(arms_i[2] - arms_i[3] + n_length - 1)
             diff3 = int(arms_i[4] - arms_i[5] + n_length - 1)
 
-            # for each trial, needs to figure out the D11, D10, D01, D00 arms
-
+            # Determine arm ordering
             label_i = labels_val_comb[i]
             order = [label_i, mapping10[label_i]]  # 11, 10 arm
 
-            arms0 = np.array(mapping0[label_i])  # incorrect primary arm
+            # Find incorrect primary arms
+            arms0 = np.array(mapping0[label_i])
             error0 = np.abs(arms_i[arms0 + 2] - tm2_i)
-            arm01_idx = np.random.choice(np.where(error0 == np.min(error0))[0], 1)  # one line fuzzy max
+            arm01_idx = np.random.choice(np.where(error0 == np.min(error0))[0], 1)
             arm01 = arms0[arm01_idx][0]
             arm00 = mapping10[arm01]
             order.append(arm01)
             order.append(arm00)
             order = np.array(order)
 
-            # calculate the mean vector in each cell
-            if vector_o[diff1, diff2, diff3] is None:
-                vector_o[diff1, diff2, diff3] = [np.where(order == choices_o[i])[0][0]]
-            else:
-                vector_o[diff1, diff2, diff3].append(np.where(order == choices_o[i])[0][0])
+            # Store choice vectors for each strategy
+            for vector, choice in [(vector_o, choices_o), (vector_h, choices_h),
+                                 (vector_p, choices_p), (vector_c, choices_c),
+                                 (vector_model, choices_model)]:
+                if vector[diff1, diff2, diff3] is None:
+                    vector[diff1, diff2, diff3] = [np.where(order == choice[i])[0][0]]
+                else:
+                    vector[diff1, diff2, diff3].append(np.where(order == choice[i])[0][0])
 
-            if vector_h[diff1, diff2, diff3] is None:
-                vector_h[diff1, diff2, diff3] = [np.where(order == choices_h[i])[0][0]]
-            else:
-                vector_h[diff1, diff2, diff3].append(np.where(order == choices_h[i])[0][0])
-
-            if vector_p[diff1, diff2, diff3] is None:
-                vector_p[diff1, diff2, diff3] = [np.where(order == choices_p[i])[0][0]]
-            else:
-                vector_p[diff1, diff2, diff3].append(np.where(order == choices_p[i])[0][0])
-
-            if vector_c[diff1, diff2, diff3] is None:
-                vector_c[diff1, diff2, diff3] = [np.where(order == choices_c[i])[0][0]]
-            else:
-                vector_c[diff1, diff2, diff3].append(np.where(order == choices_c[i])[0][0])
-
-            if vector_model[diff1, diff2, diff3] is None:
-                vector_model[diff1, diff2, diff3] = [np.where(order == choices_model[i])[0][0]]
-            else:
-                vector_model[diff1, diff2, diff3].append(np.where(order == choices_model[i])[0][0])
-
-        # compare vector means between model and three strategies
+        # Flatten vectors for comparison
         vector_o = vector_o.flatten()
         vector_h = vector_h.flatten()
         vector_p = vector_p.flatten()
-
         vector_c = vector_c.flatten()
         vector_model = vector_model.flatten()
-        euc_o = []
-        euc_h = []
-        euc_p = []
-        euc_c = []
+
+        # Calculate Euclidean distances between model and strategies
+        euc_o, euc_h, euc_p, euc_c = [], [], [], []
+        
         for i in range(len(vector_model)):
             if vector_model[i] is not None:
+                # Convert choices to one-hot vectors
                 v_m = np.array(vector_model[i])
                 v_m1 = np.zeros((len(v_m), 4))
                 v_m1[np.arange(v_m1.shape[0]), v_m] = 1
                 v_m1 = np.mean(v_m1, axis=0)
 
-                v_o = np.array(vector_o[i])
-                v_o1 = np.zeros((len(v_o), 4))
-                v_o1[np.arange(v_o1.shape[0]), v_o] = 1
-                v_o1 = np.mean(v_o1, axis=0)
-                euc_o.append(v_o1 - v_m1)
+                for vec, choices in [(euc_o, vector_o), (euc_h, vector_h),
+                                   (euc_p, vector_p), (euc_c, vector_c)]:
+                    v = np.array(choices[i])
+                    v1 = np.zeros((len(v), 4))
+                    v1[np.arange(v1.shape[0]), v] = 1
+                    v1 = np.mean(v1, axis=0)
+                    vec.append(v1 - v_m1)
 
-                v_h = np.array(vector_h[i])
-                v_h1 = np.zeros((len(v_h), 4))
-                v_h1[np.arange(v_h1.shape[0]), v_h] = 1
-                v_h1 = np.mean(v_h1, axis=0)
-                euc_h.append(v_h1 - v_m1)
-
-                v_p = np.array(vector_p[i])
-                v_p1 = np.zeros((len(v_p), 4))
-                v_p1[np.arange(v_p1.shape[0]), v_p] = 1
-                v_p1 = np.mean(v_p1, axis=0)
-                euc_p.append(v_p1 - v_m1)
-
-                v_c = np.array(vector_c[i])
-                v_c1 = np.zeros((len(v_c), 4))
-                v_c1[np.arange(v_c1.shape[0]), v_c] = 1
-                v_c1 = np.mean(v_c1, axis=0)
-                euc_c.append(v_c1 - v_m1)
-
+        # Store mean Euclidean distances
         euc_all[it, 0] = np.mean(la.norm(np.array(euc_o)[:, :], ord=2, axis=1))
         euc_all[it, 1] = np.mean(la.norm(np.array(euc_h)[:, :], ord=2, axis=1))
         euc_all[it, 2] = np.mean(la.norm(np.array(euc_p)[:, :], ord=2, axis=1))
-
-        # for i in range(len(thresh)):
-        #     euc_c[i] = np.mean(la.norm(np.array(euc_c[i])[:, :], ord=2, axis=1))
         euc_all[it, 3] = np.mean(la.norm(np.array(euc_c)[:, :], ord=2, axis=1))
-
-        # # filter trials with correct answer
-        #
-        # idx_good = np.where(np.logical_and(np.logical_xor(choices_model <= 1, choices_o <= 1),
-        #                                    in_arms_val[:, 0, -1] != in_arms_val[:, 1, -1]))
-        # idx_c = np.where(np.logical_and(choices_model == choices_c[1], choices_model != choices_o))[0]
-        # idx_o = np.where(np.logical_and(choices_model != choices_c[1], choices_model == choices_o))[0]
-        # idx_h = np.where(np.logical_and(choices_model == choices_h, choices_model != choices_c[1]))[0]
-        #
-        # idx_goodc = np.intersect1d(idx_good, idx_c)
-        # viz(net, inputs, idx_goodc[0])
 
         print(it)
 
+    # Save results
     results = {
         'euc_dist': euc_all,
     }
-
     torch.save(results, str(save_path) + '.euc')
 
     return results
 
 
 def SwitchFrequency(params):
+    """
+    Calculates the frequency of decision switches for different input differences.
+    
+    Args:
+        params: Dictionary containing:
+            save_path: Path to save results
+            net: Neural network model
+            task_data_generator: Generator for task trial data
+            
+    Returns:
+        Dictionary containing switch frequencies for each input difference level
+    """
     save_path = params['save_path']
     net = params['net']
     task_data_generator = params['task_data_generator']
 
-    freq = np.zeros(4)  # 4 differences
+    # Initialize array to store frequencies for 4 different input differences
+    freq = np.zeros(4)  
 
+    # Get trial data
     trials = task_data_generator()
-    in_arms = trials['in_arms']
-    in_time = trials['in_time']
-    labels = trials['labels'][:, :, -1]
+    in_arms = trials['in_arms']  # Input arm values
+    in_time = trials['in_time']  # Time indicators
+    labels = trials['labels'][:, :, -1]  # Trial labels
 
+    # Prepare inputs for network
     inputs = np.concatenate((in_arms, in_time), axis=1)
     inputs = torch.from_numpy(inputs)
+    
+    # Get model predictions
     model_results = net(copy.deepcopy(inputs))
     keys = model_results['keys'].detach().numpy()
-    # only count switch after tm1
+    
+    # Find time marker positions
     idx_tm = np.argmax(in_time, axis=2)
     n_trials = inputs.shape[0]
+    
+    # Count switches for each trial
     switch_counts = np.zeros(n_trials)
     for n in range(n_trials):
+        # Get binary decisions after time marker
         switches = keys[n, 0, idx_tm[n, 0]:] < 0.5
+        # Count number of switches using XOR between adjacent timepoints
         switch_counts[n] = np.sum(np.logical_xor(np.roll(switches, 1), switches)[1:])
 
+    # Calculate mean switch frequency for each input difference level
     diff_h = abs(inputs[:, 0, 0] - inputs[:, 1, 0]).detach().numpy()
     for diff in range(4):
         freq[diff] = switch_counts[diff_h == diff].mean()
 
+    # Store and save results
     results = {
         'freq': freq,
     }
 
     torch.save(results, str(save_path) + '.sf')
     return results
-
-
-def AnalysisWholeTraj(params):
-    net = params['net']
-    task_data_generator = params['task_data_generator']
-
-    idx = params['task_samples']['idx_val']
-
-    in_arms = params['task_samples']['in_arms'][idx, :, :]
-    in_time = params['task_samples']['in_time'][idx, :, :]
-    labels = params['task_samples']['labels'][idx, :, -1]
-    trials = {
-        'in_arms': in_arms,
-        'in_time': in_time,
-        'labels': labels
-    }
-    choices_o = p_models.optimalStd(trials)
-    choices_c = p_models.counterfactualStd(trials, threshold=0.01)
-
-    mapping = {
-        (0, 0): 0,
-        (0, 1): 1,
-        (1, 0): 2,
-        (1, 1): 3
-    }
-    labels_d1 = np.argmax(labels[:, :2], 1)
-    labels_d2 = np.argmax(labels[:, 2:], 1)
-    labels = np.zeros(len(idx))
-    for i in range(len(idx)):
-        labels[i] = mapping[(labels_d1[i], labels_d2[i])]
-    # labels_val = np.argmax(labels_val, axis=1)
-
-    inputs = np.concatenate((in_arms, in_time), axis=1)
-    inputs = torch.from_numpy(inputs)
-    model_results = net(copy.deepcopy(inputs))
-
-    hs = model_results['hs'].detach().numpy()
-    keys = model_results['keys'].detach().numpy()
-    prs_batch = model_results['prs'][:, :, 25:]
-    keys_batch = model_results['keys'][:, :, 25:]
-
-    # PCA on all data
-    hs_pca = np.transpose(hs, (0, 2, 1))
-    hs_pca = np.reshape(hs_pca, (hs_pca.shape[0] * hs_pca.shape[1], hs_pca.shape[2]))
-    pca = PCA()
-    pca.fit(hs_pca)
-    pc3 = pca.components_[:3, :]
-    var_expl = np.cumsum(pca.explained_variance_ratio_)
-
-    plot_var = 0
-    if plot_var:
-        figure, ax = plt.subplots()
-        x = np.arange(1, len(var_expl) + 1)
-        ax.plot(x, var_expl)
-        ax.set_xlabel('num of PCs')
-        ax.set_ylabel('var. Expl.')
-        plt.show()
-
-    hs_pc3 = np.dot(hs_pca, pc3.T)
-    hs_pc3 = np.reshape(hs_pc3, (hs.shape[0], hs.shape[2], hs_pc3.shape[1]))
-
-    model_d1 = torch.argmax(torch.mean(keys_batch[:, :, :], 2), 1).detach().numpy()
-    model_d2 = torch.argmin(torch.mean(torch.abs(prs_batch[:, 3:5, :]), 2), 1).detach().numpy()
-    choices_model = np.zeros(len(idx))
-    for i in range(len(idx)):
-        choices_model[i] = mapping[(model_d1[i], model_d2[i])]
-
-    idx_good = np.where(np.logical_and(np.logical_xor(choices_model <= 1, choices_o <= 1),
-                                       in_arms[:, 0, -1] != in_arms[:, 1, -1]))
-    idx_c = np.where(np.logical_and(choices_model == choices_c, choices_model != choices_o))[0]
-    idx_goodc = np.intersect1d(idx_good, idx_c)
-
-    n_bins = 10
-    lim = [-3, 3]
-    idx_table = np.ndarray(n_bins, dtype=object)
-    for i in range(len(idx)):
-        tm1 = in_time[i, 0, -1]
-        diff_pri = np.abs(in_arms[i, 0, 0] - tm1) - np.abs(in_arms[i, 1, 0] - tm1)
-        checker = int((diff_pri - lim[0]) / ((lim[1] - lim[0]) / n_bins))
-        if checker == n_bins:
-            checker -= 1
-
-        if idx_table[checker] is None:
-            idx_table[checker] = [i]
-        else:
-            idx_table[checker].append(i)
-
-    colormap = 'jet'
-    cmap = plt.get_cmap(colormap, n_bins)
-    colors = cmap(np.arange(0, cmap.N))
-    colors = np.flip(colors, axis=0)
-
-    fig = plt.figure()
-
-    ax = fig.add_subplot(1, 2, 1, projection='3d')
-    lgd = []
-    handles = []
-    for i in range(n_bins):  # [0,2,7,9]:#
-        idx_i = np.array(idx_table[i])
-        idx_i = np.random.choice(idx_i, min(int(len(idx_i) / 5), 10), replace=False)
-
-        data_i = hs_pc3[idx_i, :, :]
-        keys_i = keys[idx_i, :, :]
-
-        for j in range(len(idx_i)):
-            h, = ax.plot(data_i[j, :, 0], data_i[j, :, 1], data_i[j, :, 2], color=colors[i, :], linewidth=2, alpha=0.9)
-
-            if keys_i[j, 0, -1] > 0.5:
-                c = [1, 0, 0]
-            else:
-                c = [0, 0, 1]
-        lgd.append(np.round(lim[0] + i * ((lim[1] - lim[0]) / n_bins), 2))
-        handles.append(h)
-
-        idx_left = keys_i[:, 0, -1] >= 0.5
-        idx_right = keys_i[:, 0, -1] < 0.5
-        ax.scatter(data_i[idx_left, -1, 0], data_i[idx_left, -1, 1], data_i[idx_left, -1, 2], color=c, s=20, alpha=0.8)
-        ax.scatter(data_i[idx_right, -1, 0], data_i[idx_right, -1, 1], data_i[idx_right, -1, 2], color=c, s=20,
-                   alpha=0.8)
-
-        idx_tm1 = np.argmax(in_time[idx_i, 0, :], 1) - 1
-        idx_tm2 = np.argmax(in_time[idx_i, 1, :], 1) - 1
-        ax.scatter(hs_pc3[idx_i, idx_tm1, 0], hs_pc3[idx_i, idx_tm1, 1], hs_pc3[idx_i, idx_tm1, 2], color=[0, 0, 0],
-                   s=10, alpha=0.8, marker='<')
-        ax.scatter(hs_pc3[idx_i, idx_tm2, 0], hs_pc3[idx_i, idx_tm2, 1], hs_pc3[idx_i, idx_tm2, 2], color=[0, 0, 0],
-                   s=10, alpha=0.8, marker='8')
-
-    ax.legend(handles, lgd)
-
-    idx_table_c = np.ndarray(n_bins, dtype=object)
-    for i in idx_goodc:
-        tm1 = in_time[i, 0, -1]
-        diff_pri = np.abs(in_arms[i, 0, 0] - tm1) - np.abs(in_arms[i, 1, 0] - tm1)
-        checker = int((diff_pri - lim[0]) / ((lim[1] - lim[0]) / 10))
-        if checker == n_bins:
-            checker -= 1
-
-        if idx_table_c[checker] is None:
-            idx_table_c[checker] = [i]
-        else:
-            idx_table_c[checker].append(i)
-
-    ax = fig.add_subplot(1, 2, 2, projection='3d')
-    lgd = []
-    handles = []
-    for i in range(n_bins):
-        if idx_table_c[i] is None:
-            continue
-        # [0,2,7,9]:#
-        idx_i = np.array(idx_table_c[i])
-        # idx_i = np.random.choice(idx_i, min(int(len(idx_i) / 1), 100), replace=False)
-
-        data_i = hs_pc3[idx_i, :, :]
-        keys_i = keys[idx_i, :, :]
-        for j in range(len(idx_i)):
-            h, = ax.plot(data_i[j, :, 0], data_i[j, :, 1], data_i[j, :, 2], color=colors[i, :], linewidth=2, alpha=0.9)
-            if keys_i[j, 0, -1] > 0.5:
-                c = [1, 0, 0]
-            else:
-                c = [0, 0, 1]
-
-        lgd.append(np.round(lim[0] + i * ((lim[1] - lim[0]) / n_bins), 2))
-        handles.append(h)
-
-        idx_left = keys_i[:, 0, -1] >= 0.5
-        idx_right = keys_i[:, 0, -1] < 0.5
-        ax.scatter(data_i[idx_left, -1, 0], data_i[idx_left, -1, 1], data_i[idx_left, -1, 2], color=c, s=20, alpha=0.8)
-        ax.scatter(data_i[idx_right, -1, 0], data_i[idx_right, -1, 1], data_i[idx_right, -1, 2], color=c, s=20,
-                   alpha=0.8)
-
-        idx_tm1 = np.argmax(in_time[idx_i, 0, :], 1) - 1
-        idx_tm2 = np.argmax(in_time[idx_i, 1, :], 1) - 1
-        ax.scatter(hs_pc3[idx_i, idx_tm1, 0], hs_pc3[idx_i, idx_tm1, 1], hs_pc3[idx_i, idx_tm1, 2], color=[0, 0, 0],
-                   s=10, alpha=0.8, marker='<')
-        ax.scatter(hs_pc3[idx_i, idx_tm2, 0], hs_pc3[idx_i, idx_tm2, 1], hs_pc3[idx_i, idx_tm2, 2], color=[0, 0, 0],
-                   s=10, alpha=0.8, marker='8')
-    ax.legend(handles, lgd)
-    plt.show()
-
-
-def AnalysisTmDynamics(params):
-    net = params['net']
-    task_data_generator = params['task_data_generator']
-
-    idx = params['task_samples']['idx_val']
-
-    in_arms = params['task_samples']['in_arms'][idx, :, :]
-    in_time = params['task_samples']['in_time'][idx, :, :]
-    labels = params['task_samples']['labels'][idx, :, -1]
-    trials = {
-        'in_arms': in_arms,
-        'in_time': in_time,
-        'labels': labels
-    }
-    choices_o = p_models.optimalStd(trials)
-    choices_c = p_models.counterfactualStd(trials, threshold=0.01)
-
-    mapping = {
-        (0, 0): 0,
-        (0, 1): 1,
-        (1, 0): 2,
-        (1, 1): 3
-    }
-    mapping1 = {
-        0: [2, 3],
-        1: [4, 5]
-    }
-    labels_d1 = np.argmax(labels[:, :2], 1)
-    labels_d2 = np.argmax(labels[:, 2:], 1)
-    labels = np.zeros(len(idx))
-    for i in range(len(idx)):
-        labels[i] = mapping[(labels_d1[i], labels_d2[i])]
-    # labels_val = np.argmax(labels_val, axis=1)
-
-    inputs = np.concatenate((in_arms, in_time), axis=1)
-    inputs = torch.from_numpy(inputs)
-    model_results = net(copy.deepcopy(inputs))
-
-    hs = model_results['hs'].detach().numpy()
-    keys = model_results['keys'].detach().numpy()
-    prs_batch = model_results['prs'][:, :, 25:]
-    keys_batch = model_results['keys'][:, :, 25:]
-
-    # PCA on all data
-    hs_pca = np.transpose(hs, (0, 2, 1))
-    hs_pca = np.reshape(hs_pca, (hs_pca.shape[0] * hs_pca.shape[1], hs_pca.shape[2]))
-    pca = PCA()
-    pca.fit(hs_pca)
-    pc3 = pca.components_[:3, :]
-    var_expl = np.cumsum(pca.explained_variance_ratio_)
-
-    plot_var = 0
-    if plot_var:
-        figure, ax = plt.subplots()
-        x = np.arange(1, len(var_expl) + 1)
-        ax.plot(x, var_expl)
-        ax.set_xlabel('num of PCs')
-        ax.set_ylabel('var. Expl.')
-        plt.show()
-
-    hs_pc3 = np.dot(hs_pca, pc3.T)
-    hs_pc3 = np.reshape(hs_pc3, (hs.shape[0], hs.shape[2], hs_pc3.shape[1]))
-
-    model_d1 = torch.argmax(torch.mean(keys_batch[:, :, :], 2), 1).detach().numpy()
-    model_d2 = torch.argmin(torch.mean(torch.abs(prs_batch[:, 3:5, :]), 2), 1).detach().numpy()
-    choices_model = np.zeros(len(idx))
-    for i in range(len(idx)):
-        choices_model[i] = mapping[(model_d1[i], model_d2[i])]
-
-    idx_good = np.where(np.logical_and(np.logical_xor(choices_model <= 1, choices_o <= 1),
-                                       in_arms[:, 0, -1] != in_arms[:, 1, -1]))
-    idx_c = np.where(np.logical_and(choices_model == choices_c, choices_model != choices_o))[0]
-    idx_goodc = np.intersect1d(idx_good, idx_c)
-
-    n_bins = 10
-    lim1 = [-3, 3]
-    idx_table = np.ndarray((n_bins, 2), dtype=object)
-    # find index of trials with different evidence for the first choice
-    n_bins2 = 10
-    lim2 = [0, 3]
-    idx_table2 = np.ndarray((n_bins, 2, n_bins2), dtype=object)
-    for i in range(len(idx)):
-        tm1 = in_time[i, 0, -1]
-        tm2 = in_time[i, 1, -1]
-        diff_pri = np.abs(in_arms[i, 0, 0] - tm1) - np.abs(in_arms[i, 1, 0] - tm1)
-        checker1 = int((diff_pri - lim1[0]) / ((lim1[1] - lim1[0]) / n_bins))
-        idx_tm2 = np.argmax(in_time[i, 1, :]) - 1
-
-        key_i = np.argmax(keys[i, :, idx_tm2])
-        if checker1 == n_bins:
-            checker1 -= 1
-
-        if in_arms[i, 0, 0] < in_arms[i, 1, 0]:
-            lr = 0
-        else:
-            lr = 1
-
-        if idx_table[checker1, lr] is None:
-            idx_table[checker1, lr] = [i]
-        else:
-            idx_table[checker1, lr].append(i)
-
-        diff_sec = min(abs(tm2 - in_arms[i, mapping1[key_i], 0]))
-        checker2 = int((diff_sec - lim2[0]) / ((lim2[1] - lim2[0]) / n_bins2))
-        if checker2 >= n_bins2:
-            checker2 = n_bins2 - 1
-
-        if idx_table2[checker1, lr, checker2] is None:
-            idx_table2[checker1, lr, checker2] = [i]
-        else:
-            idx_table2[checker1, lr, checker2].append(i)
-
-    colormap1 = 'jet'
-    cmap1 = plt.get_cmap(colormap1, n_bins)
-    colors1 = cmap1(np.arange(0, cmap1.N))
-    colors1 = np.flip(colors1, axis=0)
-
-    colormap2 = 'jet'
-    cmap2 = plt.get_cmap(colormap2, n_bins)
-    colors2 = cmap2(np.arange(0, cmap2.N))
-    colors2 = np.flip(colors2, axis=0)
-
-    fig = plt.figure()
-
-    ax = fig.add_subplot(1, 3, 1, projection='3d')
-    lgd = []
-    handles = []
-    for i in range(n_bins):
-        for j in range(2):  # [0,2,7,9]:#
-            idx_i = np.array(idx_table[i, j])
-            idx_i = np.random.choice(idx_i, min(int(len(idx_i) / 5), 10), replace=False)
-
-            data_i = hs_pc3[idx_i, :, :]
-            keys_i = keys[idx_i, :, :]
-
-            idx_tm1 = np.argmax(in_time[idx_i, 0, :], 1) - 1
-            idx_tm2 = np.argmax(in_time[idx_i, 1, :], 1) - 1
-
-            for k in range(len(idx_i)):
-                h, = ax.plot(data_i[k, :idx_tm2[k] + 1, 0], data_i[k, :idx_tm2[k] + 1, 1],
-                             data_i[k, :idx_tm2[k] + 1, 2], color=colors1[i, :], linewidth=2, alpha=0.7)
-
-                if keys_i[k, 0, -1] > 0.5:
-                    c = [1, 0, 0]
-                else:
-                    c = [0, 0, 1]
-            ax.scatter(hs_pc3[idx_i, idx_tm1, 0], hs_pc3[idx_i, idx_tm1, 1], hs_pc3[idx_i, idx_tm1, 2],
-                       color=[0, 0, 0], s=10, alpha=0.8, marker='<')
-            ax.scatter(hs_pc3[idx_i, idx_tm2, 0], hs_pc3[idx_i, idx_tm2, 1], hs_pc3[idx_i, idx_tm2, 2],
-                       color=[0, 0, 0], s=10, alpha=0.8, marker='8')
-        lgd.append(np.round(lim1[0] + i * ((lim1[1] - lim1[0]) / n_bins), 2))
-        handles.append(h)
-
-        # idx_left = keys_i[:, 0, -1] >= 0.5
-        # idx_right = keys_i[:, 0, -1] < 0.5
-        # ax.scatter(data_i[idx_left, -1, 0], data_i[idx_left, -1, 1], data_i[idx_left, -1, 2], color=c, s=20, alpha=0.8)
-        # ax.scatter(data_i[idx_right, -1, 0], data_i[idx_right, -1, 1], data_i[idx_right, -1, 2], color=c, s=20,
-        #            alpha=0.8)
-
-    ax.legend(handles, lgd)
-
-    ax = fig.add_subplot(1, 3, 2, projection='3d')
-    lgd = []
-    handles = []
-    for i in range(n_bins):
-        for j in range(2):
-            idx_i = np.array(idx_table[i, j])
-            # idx_i = np.random.choice(idx_i, min(int(len(idx_i) / 5), 10), replace=False)
-            idx_tm1 = np.argmax(in_time[idx_i, 0, :], 1) - 1
-            idx_tm2 = np.argmax(in_time[idx_i, 1, :], 1) - 1
-            x0 = hs_pc3[idx_i, idx_tm2, 0].mean()
-            y0 = hs_pc3[idx_i, idx_tm2, 1].mean()
-            z0 = hs_pc3[idx_i, idx_tm2, 2].mean()
-            ax.scatter(x0, y0, z0, color=colors1[i, :], s=30, alpha=0.8)
-
-            # data_i = hs_pc3[idx_i, :, :]
-            # keys_i = keys[idx_i, :, :]
-            # idx_left = keys_i[:, 0, -1] >= 0.5
-            # idx_right = keys_i[:, 0, -1] < 0.5
-            # ax.scatter(data_i[idx_left, -1, 0], data_i[idx_left, -1, 1], data_i[idx_left, -1, 2], color=[1,0,0], s=20, alpha=0.8)
-            # ax.scatter(data_i[idx_right, -1, 0], data_i[idx_right, -1, 1], data_i[idx_right, -1, 2], color=[0,0,1], s=20,
-            #            alpha=0.8)
-
-            for k in range(n_bins2):
-                idx_k = idx_table2[i, j, k]
-                if idx_k is not None:
-                    x1 = hs_pc3[idx_k, -1, 0].mean()
-                    y1 = hs_pc3[idx_k, -1, 1].mean()
-                    z1 = hs_pc3[idx_k, -1, 2].mean()
-                    h = ax.plot([x0, x1], [y0, y1], [z0, z1], color=colors2[k, :], alpha=0.8)
-
-                    lgd.append(np.round(lim2[0] + i * ((lim2[1] - lim2[0]) / n_bins2), 2))
-                    handles.append(h)
-
-    ax.legend(handles, lgd)
-
-    ax = fig.add_subplot(1, 3, 3, projection='3d')
-    lgd = []
-    handles = []
-    for i in range(n_bins):
-        for j in range(2):  # [0,2,7,9]:#
-            idx_i = np.array(idx_table[i, j])
-            idx_i = np.random.choice(idx_i, min(int(len(idx_i) / 5), 10), replace=False)
-
-            data_i = hs_pc3[idx_i, :, :]
-            keys_i = keys[idx_i, :, :]
-
-            idx_tm1 = np.argmax(in_time[idx_i, 0, :], 1) - 1
-            idx_tm2 = np.argmax(in_time[idx_i, 1, :], 1) - 1
-
-            for k in range(len(idx_i)):
-                h, = ax.plot(data_i[k, :, 0], data_i[k, :, 1],
-                             data_i[k, :, 2], color=colors1[i, :], linewidth=2, alpha=0.5)
-
-            idx_left = keys_i[:, 0, -1] >= 0.5
-            idx_right = keys_i[:, 0, -1] < 0.5
-            ax.scatter(data_i[idx_left, -1, 0], data_i[idx_left, -1, 1], data_i[idx_left, -1, 2], color=[1, 0, 0], s=20,
-                       alpha=0.6)
-            ax.scatter(data_i[idx_right, -1, 0], data_i[idx_right, -1, 1], data_i[idx_right, -1, 2], color=[0, 0, 1],
-                       s=20,
-                       alpha=0.6)
-
-            # ax.scatter(hs_pc3[idx_i, idx_tm1, 0], hs_pc3[idx_i, idx_tm1, 1], hs_pc3[idx_i, idx_tm1, 2],
-            #            color=[0, 0, 0], s=10, alpha=0.8, marker='<')
-            # ax.scatter(hs_pc3[idx_i, idx_tm2, 0], hs_pc3[idx_i, idx_tm2, 1], hs_pc3[idx_i, idx_tm2, 2],
-            #            color=[0, 0, 0], s=10, alpha=0.8, marker='8')
-        lgd.append(np.round(lim1[0] + i * ((lim1[1] - lim1[0]) / n_bins), 2))
-        handles.append(h)
-
-        # idx_left = keys_i[:, 0, -1] >= 0.5
-        # idx_right = keys_i[:, 0, -1] < 0.5
-        # ax.scatter(data_i[idx_left, -1, 0], data_i[idx_left, -1, 1], data_i[idx_left, -1, 2], color=c, s=20, alpha=0.8)
-        # ax.scatter(data_i[idx_right, -1, 0], data_i[idx_right, -1, 1], data_i[idx_right, -1, 2], color=c, s=20,
-        #            alpha=0.8)
-
-    ax.legend(handles, lgd)
-    plt.show()

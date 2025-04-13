@@ -18,3 +18,19 @@ The raw human subjects data are also contained in this repository.
 For matlab code, the data are contained in <code> src/matlab/<Figure_Number>/Data </code>
 
 For python code, the data are contained in <code> src/python/human </code>
+
+
+## Overview
+The main source files for the RNN training are the following:
+
+<code> src/python/task </code> contains the script generating simulation trials.
+
+<code> src/python/nets </code> contains the code for RNNs.
+
+<code> src/python/config </code> contains the hyperparameters for the task variables, RNN size, and training schedule. <code> hp0.py-hp7.py </code> are the hyperparameters for different RNN variants.
+
+<code> src/python/analysis </code> contains the post-hoc analysis code for trained RNNs. 
+
+
+
+

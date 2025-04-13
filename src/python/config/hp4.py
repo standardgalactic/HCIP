@@ -27,5 +27,5 @@ config = {
     'trainer_class': 'rnn_trainer',
 
     'analysis_module': 'analysis.analyses',
-    'analysis_function': 'AnalysisMatchModelStat'# 'AnalysisTmDynamics'#'AnalysisMatchModelStd'#'AnalysisWholeTraj'#
+    'analysis_function': 'AnalysisMatchModelStat'
 }
