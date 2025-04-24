@@ -7,9 +7,9 @@ Link to paper: place_holder
 ## How to run
 Different parts of the project was implemented with different programming languages.
 
-To generate Figure 2, Figure 3, Figure 4, run the respective scripts under <code> src/matlab </code>
+To generate Figure 2, Figure 3, Figure 4-6, run the respective scripts under <code> src/matlab </code>
 
-To generate Figure 1d, Figure 5, Figure 6, run scripts under <code> src/python/submission </code>
+To generate Figure 1d, Figure 7, Figure 8, run scripts under <code> src/python/submission </code>
 
 ## Human Data
 
