@@ -66,8 +66,8 @@ class hmaze_task(object):
         # Generate data for each trial
         for i in range(n_total):
             # Set arm lengths for current trial
-            in_arms[i, 0:6, :] = [l1_list[i], l2_list[i], l3_list[i], 
-                                 l4_list[i], l5_list[i], l6_list[i]]
+            in_arms[i, 0:6, :] = np.array([l1_list[i], l2_list[i], l3_list[i], 
+                                 l4_list[i], l5_list[i], l6_list[i]])[:, np.newaxis]
 
             # Process first decision point
             if d1_list[i] == 0:  # Take first arm
