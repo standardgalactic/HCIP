@@ -1,8 +1,8 @@
-# MR_CT_NW_MJ_2024
+# HCIP
 
-This repository contains the code and data to generate figures for manuscript "Computational basis of hierarchical and counterfactual information processing".
+This repository contains the code and data to generate figures for manuscript "Computational Basis of Hierarchical and Counterfactual Information Processing".
 
-Link to paper: place_holder
+Link to paper: https://www.nature.com/articles/s41562-025-02232-3
 
 ## How to run
 Different parts of the project was implemented with different programming languages.
